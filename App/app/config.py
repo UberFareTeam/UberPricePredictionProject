@@ -22,7 +22,7 @@ DEFAULT_MODEL_ARTIFACT = MODEL_DIR / "gradient_boosting.joblib"
 
 AVAILABLE_MODEL_ARTIFACTS: dict[str, str] = {
     "Random Forest": "random_forest_regression.joblib",
-    "Gradient Boosting": "gradient_boosting_regression.joblib",
+    "Gradient Boosting": "gradient_boosting.joblib",
     "Decision Tree": "decision_tree_regression.joblib",
     "Linear Regression": "linear_regression.joblib",
     "Ridge Regression": "ridge_regression.joblib",
