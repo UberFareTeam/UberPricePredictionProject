@@ -1,32 +1,40 @@
 # FareCast
 
-FareCast is an app that predicts how much your Uber ride will cost before you even book it. You pick where you're starting from and where you're going on a map, and the app tells you the price.
+FareCast predicts how much your Uber ride will cost before you book it. You pick a pickup point and a dropoff point on a map, and it gives you a price.
 
 Live demo: https://gallows-bacterium-scarce.ngrok-free.dev/
 
-## What it does
+## Why I built the UI the way I did
 
-You open the app and see a map. You click once to set your pickup point and click again to set where you're going. Then you choose how many people are riding with you and what type of ride you want (UberX, Comfort, or UberXL). Hit "Get fare estimate" and the app gives you a price, a time estimate and tells you if it's rush hour so you know why the price might be a bit higher.
+I started with the map because that's the core interaction of the whole app. Everything else, the passenger count, the ride type, the price, all depend on two points existing first. I used folium instead of Streamlit's built in map because folium wraps Leaflet.js, which is what most real map products use under the hood, and it supports click events that a plain st.map doesn't give you. On top of that I used a package called streamlit-folium, which is what actually lets a click on the map travel back into the Python session, since folium alone just renders a static map inside an iframe.
 
-Every prediction you make gets saved so there's a History tab where you can scroll back and see all your past trips. There's also a Model Comparison tab that shows how different machine learning models performed against each other so you can see the actual numbers behind the predictions instead of just trusting a black box.
+The pickup and dropoff logic runs on Streamlit's session state. First click sets the pickup point, second click sets the dropoff point, third click starts a new trip. That state has to survive across reruns, since Streamlit reruns the entire script top to bottom on every interaction, so without session state the app would forget your pickup point the instant you clicked dropoff.
 
-## How the price gets calculated
+I originally had all the trip inputs, passenger count, ride type, time, in Streamlit's native sidebar. I moved everything into the main page instead, because a sidebar splits attention away from the map, and a ride hailing app is supposed to feel like one continuous flow, not a form next to a separate panel.
 
-Behind the scenes the app takes your pickup and dropoff points and works out the real distance between them, what direction you're heading, how far you are from the city center and whether you picked a busy time of day. All of that gets fed into a machine learning model that was trained on real Uber trip data and the model gives back a base price. From there the app adjusts the price depending on the ride type you picked and adds a bit extra if it's rush hour.
+## How the price actually gets calculated
 
-## Built with
+Sixteen features go into the model for every single prediction. Five of them are raw, pickup latitude, pickup longitude, dropoff latitude, dropoff longitude, and passenger count. The other eleven get calculated the moment you pick your two points: the real distance between them using the Haversine formula, the compass bearing from pickup to dropoff, how far each point is from the city center, the hour, day, month, year, day of week, whether it's a weekend, and whether it falls inside rush hour windows.
 
-**Streamlit** runs the whole app. It's a Python framework that turns a normal script into a web app without needing to write any HTML or JavaScript which made sense here since the whole team already knew Python and the focus was on the machine learning not building a frontend from scratch.
+Those sixteen numbers get scaled with the same StandardScaler that was used during training, then handed to the trained regression model, which returns a base fare. From there the app applies a ride type multiplier, UberX is the baseline, Comfort is 1.25 times that, UberXL is 1.55 times that, and adds a 1.15 times surge on top if the trip falls in a rush hour window. None of that multiplying happens inside the model itself, it's a separate pricing layer, because mixing business rules into the model would make it impossible to tell whether a bad prediction came from the model or from a pricing decision.
 
-**Folium** handles the interactive map. It's a Python wrapper around Leaflet.js, so you get a real clickable map with markers and lines just by writing Python. There's a companion package called streamlit-folium that makes folium maps talk back to Streamlit, so when you click on the map, that click actually reaches the Python code.
+## Connecting to SQL
 
-**Pandas and NumPy** handle all the number crunching. Every time you pick a pickup and dropoff point, the app needs to calculate things like the distance between the two points and the direction of travel, and pandas makes it easy to package that into the exact same table format the model expects.
+Every prediction gets written to a SQLite database the moment it happens. I chose SQLite specifically because it needs no server, no separate installation, no connection string, the entire database is one file that gets created automatically the first time the app runs.
 
-**Scikit learn** is what the model itself is built on. The joblib file that gets loaded into the app is a scikit learn model object that was trained separately, and scikit learn also provides the StandardScaler used to normalize the input features before they go into the model.
+The table has thirteen columns, pickup and dropoff coordinates, the pickup time, passenger count, ride type, trip distance, whether it was a weekend or rush hour, which model made the prediction, the predicted fare, and a timestamp. I wrapped the actual sqlite3 calls behind a repository class with two methods, save and fetch_recent, so nothing else in the app ever writes raw SQL. That means if this ever needed to move to a real database like Postgres later, only one file would need to change.
 
-**Joblib** is used specifically to load the trained model file. It's built for saving Python objects that contain large numpy arrays, like a trained model, more efficiently than the standard pickle module.
+The History tab in the app is just fetch_recent being called and rendered as a table. Nothing fancy, it proves the database is really being written to, not just declared and forgotten.
 
-**SQLite** stores every prediction that gets made. It doesn't need a separate database server running, the whole database is just one file, which made it the obvious choice for a project like this where you don't want to deal with setting up and hosting a real database.
+## The other libraries and why
+
+Pandas builds the single row DataFrame that gets passed into the model on every prediction, since the trained model expects a table shaped exactly like the one it was trained on, not a raw dictionary. NumPy handles the actual trigonometry behind the distance and bearing calculations, since Haversine and bearing formulas need sine, cosine, and arctangent on real coordinates.
+
+Scikit learn is the library the model itself is built with, and it's also where the StandardScaler comes from. Joblib is what loads the trained model file back into memory, it's built specifically for saving Python objects that hold large numpy arrays more efficiently than the standard pickle module would.
+
+## What I'd still improve
+
+The model file currently loaded has a scaling bug from training, so predictions from it should not be trusted as final numbers yet, that's being fixed by the teammate who owns the training pipeline. The route between pickup and dropoff is currently drawn as a straight line rather than a real routed path, since adding a routing API was lower priority than getting the prediction pipeline correct first.
 
 ## Who built it
 
